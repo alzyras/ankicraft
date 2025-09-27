@@ -1,0 +1,1 @@
+"""Flashcard Generator module for creating Anki flashcards from PDFs and web articles."""

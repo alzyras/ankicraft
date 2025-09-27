@@ -1,0 +1,75 @@
+[project]
+name = "uv_app"
+version = "0.1.2"
+description = "Automatically generate flashcards from articles, research papers, or PDFs"
+readme = "README.md"
+requires-python = "~=3.11"
+dependencies = [
+    "pydantic-settings>=2.10.1",
+    "python-dotenv>=1.0.1",
+    "pypdf2>=3.0.1",
+    "beautifulsoup4>=4.12.2",
+    "requests>=2.31.0",
+    "genanki>=0.13.0",
+    "transformers>=4.35.0",
+    "torch>=2.1.0",
+    "pdfplumber>=0.10.3",
+    "fpdf2>=2.7.5",
+    "openai>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+
+[tool.poe.tasks]
+lint = "uv run ruff check . --fix"
+format = "uv run ruff format ."
+x = ["format", "lint"]
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.32.2",
+    "ruff>=0.9.7",
+]
+
+[tool.ruff]
+exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "ANN002",  # Missing type annotation for args
+  "ANN003",  # Missing type annotation for kwarg
+  "ERA001",  # Commented out code
+  "S104",    # Possible binding to all interfaces
+  "BLE001",  # Do not catch Exception
+  "FBT",     # Bools in arguments
+  "DTZ",     # Datetime timezone
+  "EM",      # f-strings in exception messages
+  "FIX",     # Left out TODO, FIXME, etc.
+  "INT",     # f-string in function execeution before calls
+  "G",       # Logging linting
+  "TD",      # Rules for TODO
+  "E501",    # Line too long
+  "E722",    # Do not use bare except
+  "W505",    # Doc line too long
+  "D100",    # Missing docstring
+  "D101",    # Missing docstring
+  "D102",    # Missing docstring
+  "D103",    # Missing docstring
+  "D104",    # Missing docstring
+  "D105",    # Missing docstring
+  "D106",    # Missing docstring
+  "D107",    # Missing docstring
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "double"
+multiline-quotes = "double"
