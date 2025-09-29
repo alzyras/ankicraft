@@ -1,0 +1,18 @@
+services:
+  ankicraft-web:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8080
+      - WEB_DEBUG=False
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro  # Read-only access to environment file
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

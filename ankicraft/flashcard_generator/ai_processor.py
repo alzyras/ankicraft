@@ -2,8 +2,10 @@
 
 import logging
 from typing import List, Optional, Tuple
+import re
 
 from ..settings import FlashcardSettings
+from .language_detector import detect_language, get_language_name
 
 settings = FlashcardSettings()
 
@@ -83,7 +85,9 @@ def _extract_with_openai(text: str, user_prompt: Optional[str] = None) -> List[s
         else:
             system_message = "You are an expert at extracting key information and facts from text. Extract the most important facts and key points."
         
-        user_message = f"""Extract key facts and important points from the following text. Format each point as a separate sentence:\n\n{text}"""
+        user_message = f"""Extract key facts and important points from the following text. Format each point as a separate sentence:
+
+{text}"""
         
         response = client.chat.completions.create(
             model=settings.OPENAI_MODEL,
@@ -169,9 +173,20 @@ def _generate_qa_with_openai(text: str, user_prompt: Optional[str] = None, targe
             logging.info("Text is too long for QA generation, chunking it")
             chunks = _split_text_into_chunks(text, max_tokens)
             
+            # Detect the language of the document from the first chunk or a sample
+            sample_text = text[:min(5000, len(text))]  # Use first 5000 characters for language detection
+            detected_language = detect_language(sample_text)
+            language_name = get_language_name(detected_language)
+            logging.info(f"Detected document language: {language_name} ({detected_language})")
+            
             # Calculate questions per chunk based on target
-            chunks_to_process = min(15, len(chunks))  # Up to 15 chunks
+            chunks_to_process = len(chunks)  # Allow processing all chunks, not limited to 15
             questions_per_chunk = max(10, target_questions // chunks_to_process)
+            
+            # For maximum coverage, significantly increase the number of questions per chunk and aim to get more content covered
+            if target_cards > 500:  # Maximum coverage level
+                # In maximum coverage, request significantly more questions per chunk to ensure comprehensive coverage
+                questions_per_chunk = max(questions_per_chunk, 30)  # Increase to at least 30 questions per chunk for max coverage
             
             all_qa_pairs = []
             
@@ -179,13 +194,13 @@ def _generate_qa_with_openai(text: str, user_prompt: Optional[str] = None, targe
             for i, chunk in enumerate(chunks[:chunks_to_process]):
                 logging.info(f"Generating QA for chunk {i+1}/{chunks_to_process} (target: {questions_per_chunk} questions)")
                 
-                # Construct the prompt for QA generation
+                # Construct the prompt for QA generation in the detected language
                 if user_prompt:
-                    system_message = f"You are an expert at creating educational flashcards. {user_prompt}"
+                    system_message = f"You are an expert at creating educational flashcards in {language_name}. {user_prompt}"
                 else:
-                    system_message = "You are an expert at creating educational flashcards. Create meaningful questions that cover important concepts in the text."
+                    system_message = f"You are an expert at creating educational flashcards in {language_name}. Create meaningful questions that cover important concepts in the text."
                 
-                user_message = f"""Create {questions_per_chunk-2}-{questions_per_chunk+2} Q&A flashcards from the following text.
+                user_message = f"""Create {questions_per_chunk-2}-{questions_per_chunk+2} Q&A flashcards from the following text in {language_name}.
 Cover important facts, dates, people, events, and concepts in the text.
 Each question should:
 1. Ask exactly one specific thing
@@ -193,10 +208,13 @@ Each question should:
 3. Be clear and unambiguous
 4. Test important concepts from the text
 5. Focus on key facts that students should remember
+6. Ensure comprehensive coverage - include ALL important content from the text
+7. Include sufficient context in questions - for historical content spanning decades, include the time period, historical context, or relevant background information
+8. Make questions self-contained so they can be understood without referring to the original text
 
 Format each flashcard as:
-Q: [question]
-A: [answer]
+Q: [question in {language_name} with sufficient context]
+A: [answer in {language_name}]
 
 Text:
 {chunk}"""
@@ -209,7 +227,7 @@ Text:
                             {"role": "user", "content": user_message}
                         ],
                         temperature=0.4,  # Lower temperature for more consistent extraction
-                        max_tokens=min(2500, 200 + (questions_per_chunk * 80))  # Scale tokens with question count
+                        max_tokens=min(4000, 300 + (questions_per_chunk * 100))  # Increase max tokens to allow more questions
                     )
                     
                     # Parse the response
@@ -220,23 +238,109 @@ Text:
                     logging.error(f"Error generating QA for chunk {i+1}: {chunk_error}")
                     continue
             
-            # Deduplicate QA pairs
+            # For maximum coverage, use less strict deduplication to preserve more unique content
             seen_questions = set()
             unique_qa_pairs = []
-            for q, a in all_qa_pairs:
-                if q not in seen_questions and len(q) > 10 and len(a) > 5:
-                    seen_questions.add(q)
-                    unique_qa_pairs.append((q, a))
+            if target_questions > 500:  # Maximum coverage mode
+                # In maximum mode, be less strict about deduplication to preserve more content
+                for q, a in all_qa_pairs:
+                    # Use a more lenient check for similarity to preserve more variety
+                    is_duplicate = False
+                    for seen_q in seen_questions:
+                        # Simple similarity check - if questions share many common words, consider them similar
+                        q_words = set(q.lower().split())
+                        seen_words = set(seen_q.lower().split())
+                        if len(q_words.intersection(seen_words)) > max(2, len(q_words) * 0.5):  # If 50% or more words match (more lenient)
+                            is_duplicate = True
+                            break
+                    
+                    if not is_duplicate and len(q) > 3 and len(a) > 2:  # Even more lenient filtering
+                        seen_questions.add(q)
+                        unique_qa_pairs.append((q, a))
+            else:
+                # For non-maximum modes, use the original stricter deduplication
+                for q, a in all_qa_pairs:
+                    if q not in seen_questions and len(q) > 10 and len(a) > 5:
+                        seen_questions.add(q)
+                        unique_qa_pairs.append((q, a))
+            
+            # If we still have significantly fewer cards than target in maximum mode, 
+            # try to add more by using different prompts on the original text
+            if target_questions > 500 and len(unique_qa_pairs) < target_questions * 0.8:
+                logging.info(f"Maximum mode: Generated only {len(unique_qa_pairs)} cards out of target {target_questions}, supplementing with additional content processing...")
+                
+                # Use the original text to generate more questions with different focus
+                try:
+                    import openai
+                    client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+                    
+                    # Create a focused prompt for the remaining cards
+                    remaining_target = target_questions - len(unique_qa_pairs)
+                    focus_prompt = f"Generate {min(remaining_target, 50)} additional Q&A flashcards focusing on specific historical events, dates, people, and statistics from the text in {language_name}. Be as specific as possible."
+                    
+                    additional_user_message = f"""{focus_prompt}
+
+                    Format each flashcard as:
+                    Q: [specific question in {language_name} with full context]
+                    A: [detailed answer in {language_name}]
+
+                    Text:
+                    {text[:max_tokens]}"""  # Use first part of text to avoid exceeding token limits
+                    
+                    additional_response = client.chat.completions.create(
+                        model=settings.OPENAI_MODEL,
+                        messages=[
+                            {"role": "system", "content": system_message},
+                            {"role": "user", "content": additional_user_message}
+                        ],
+                        temperature=0.4,
+                        max_tokens=min(3000, 300 + (min(remaining_target, 50) * 80))
+                    )
+                    
+                    additional_content = additional_response.choices[0].message.content
+                    additional_qa_pairs = _parse_qa_response(additional_content)
+                    
+                    # Add the additional pairs using the same lenient filtering
+                    for q, a in additional_qa_pairs:
+                        is_duplicate = False
+                        for seen_q in seen_questions:
+                            q_words = set(q.lower().split())
+                            seen_words = set(seen_q.lower().split())
+                            if len(q_words.intersection(seen_words)) > max(2, len(q_words) * 0.5):  # If 50% or more words match
+                                is_duplicate = True
+                                break
+                        
+                        if not is_duplicate and len(q) > 3 and len(a) > 2:
+                            seen_questions.add(q)
+                            unique_qa_pairs.append((q, a))
+                            
+                except Exception as e:
+                    logging.error(f"Error generating additional cards: {e}")
             
             return unique_qa_pairs[:target_questions]  # Return target number of questions
         else:
-            # Construct the prompt for QA generation
-            if user_prompt:
-                system_message = f"You are an expert at creating educational flashcards. {user_prompt}"
-            else:
-                system_message = "You are an expert at creating educational flashcards. Create meaningful questions that cover important concepts in the text."
+            # Detect the language of the document
+            detected_language = detect_language(text)
+            language_name = get_language_name(detected_language)
+            logging.info(f"Detected document language: {language_name} ({detected_language})")
             
-            user_message = f"""Create {max(10, target_questions-5)}-{target_questions+5} Q&A flashcards from the following text.
+            # For maximum coverage, ensure comprehensive processing with contextual questions
+            if target_questions > 500:  # Maximum coverage level
+                # In maximum coverage, request comprehensive coverage of the text
+                user_message_base = f"""Create {max(10, target_questions-5)}-{target_questions+5} Q&A flashcards from the following text in {language_name}.
+Cover ALL important facts, dates, people, events, and concepts in the text.
+Each question should:
+1. Ask exactly one specific thing
+2. Not give away the answer in the question
+3. Be clear and unambiguous
+4. Test important concepts from the text
+5. Focus on key facts that students should remember
+6. Ensure comprehensive coverage - include ALL important content from the text
+7. Include sufficient context in questions - for historical content spanning decades, include the time period, historical context, or relevant background information
+8. Make questions self-contained so they can be understood without referring to the original text
+"""
+            else:
+                user_message_base = f"""Create {max(10, target_questions-5)}-{target_questions+5} Q&A flashcards from the following text in {language_name}.
 Cover important facts, dates, people, events, and concepts in the text.
 Each question should:
 1. Ask exactly one specific thing
@@ -244,10 +348,19 @@ Each question should:
 3. Be clear and unambiguous
 4. Test important concepts from the text
 5. Focus on key facts that students should remember
+"""
+
+            # Construct the prompt for QA generation in the detected language
+            if user_prompt:
+                system_message = f"You are an expert at creating educational flashcards in {language_name}. {user_prompt}"
+            else:
+                system_message = f"You are an expert at creating educational flashcards in {language_name}. Create meaningful questions that cover important concepts in the text."
+            
+            user_message = f"""{user_message_base}
 
 Format each flashcard as:
-Q: [question]
-A: [answer]
+Q: [question in {language_name}]
+A: [answer in {language_name}]
 
 Text:
 {text}"""
@@ -266,8 +379,14 @@ Text:
             content = response.choices[0].message.content
             qa_pairs = _parse_qa_response(content)
             
-            # Filter out low-quality pairs
-            filtered_pairs = [(q, a) for q, a in qa_pairs if len(q) > 10 and len(a) > 5]
+            # For maximum coverage, use more lenient quality filtering
+            if target_questions > 500:  # Maximum coverage mode
+                # In maximum mode, be more lenient with filtering to preserve more content
+                filtered_pairs = [(q, a) for q, a in qa_pairs if len(q) > 5 and len(a) > 3]
+            else:
+                # For non-maximum modes, use the original stricter filtering
+                filtered_pairs = [(q, a) for q, a in qa_pairs if len(q) > 10 and len(a) > 5]
+            
             return filtered_pairs[:target_questions]  # Return target number of questions
     except Exception as e:
         logging.error(f"Error generating QA cards with OpenAI: {e}")
@@ -276,7 +395,7 @@ Text:
 
 
 def _split_text_into_chunks(text: str, max_chunk_size: int) -> List[str]:
-    """Split text into chunks of maximum size.
+    """Split text into chunks of maximum size while preserving content meaning.
     
     Args:
         text: Text to split
@@ -311,16 +430,35 @@ def _split_text_into_chunks(text: str, max_chunk_size: int) -> List[str]:
         if len(chunk) <= max_chunk_size:
             final_chunks.append(chunk)
         else:
-            # Split by sentences
+            # Split by sentences but ensure continuity
             sentences = chunk.split('. ')
             sub_chunk = ""
+            sentence_count = 0
+            target_sentences_per_subchunk = max(5, max_chunk_size // 500)  # Ensure we have reasonable number of sentences per chunk
+            
             for sentence in sentences:
-                if len(sub_chunk) + len(sentence) > max_chunk_size:
-                    if sub_chunk.strip():
+                sentence_with_punct = sentence.strip() + ". "
+                
+                if len(sub_chunk) + len(sentence_with_punct) > max_chunk_size and sub_chunk.strip():
+                    # If we've added significant content, save the sub-chunk
+                    if len(sub_chunk) > max_chunk_size // 4:  # At least 25% of max size
                         final_chunks.append(sub_chunk.strip())
-                    sub_chunk = sentence + ". "
+                        sub_chunk = sentence_with_punct
+                        sentence_count = 1
+                    else:
+                        # If sub-chunk is still small, just add to it
+                        sub_chunk += sentence_with_punct
+                        sentence_count += 1
                 else:
-                    sub_chunk += sentence + ". "
+                    sub_chunk += sentence_with_punct
+                    sentence_count += 1
+                    
+                    # If we have reached a good number of sentences, consider starting a new chunk
+                    if sentence_count >= target_sentences_per_subchunk and len(sub_chunk) > max_chunk_size // 3:
+                        final_chunks.append(sub_chunk.strip())
+                        sub_chunk = ""
+                        sentence_count = 0
+            
             if sub_chunk.strip():
                 final_chunks.append(sub_chunk.strip())
     
@@ -344,21 +482,39 @@ def _parse_qa_response(content: str) -> List[Tuple[str, str]]:
     
     for line in lines:
         line = line.strip()
-        if line.startswith('Q:') or line.startswith('Question:'):
+        # Handle various formats for questions (English, Lithuanian, and other formats)
+        if (line.startswith('Q:') or 
+            line.startswith('Question:') or 
+            line.lower().startswith('k:') or  # Lithuanian 'K:' for 'Klausimas'
+            line.lower().startswith('klausimas:')):  # Lithuanian 'Klausimas:'
+            
             if current_question and current_answer:
                 qa_pairs.append((current_question, current_answer))
-            current_question = line.split(':', 1)[1].strip() if ':' in line else line[2:].strip()
+            current_question = line.split(':', 1)[1].strip() if ':' in line else line[len('Klausimas:'):].strip() if 'klausimas:' in line.lower() else line[2:].strip()
             current_answer = None
-        elif line.startswith('A:') or line.startswith('Answer:'):
-            current_answer = line.split(':', 1)[1].strip() if ':' in line else line[2:].strip()
+        elif (line.startswith('A:') or 
+              line.startswith('Answer:') or 
+              line.lower().startswith('a:') or  # Lithuanian 'A:' for 'Atsakymas'
+              line.lower().startswith('atsakymas:')):  # Lithuanian 'Atsakymas:'
+            
+            current_answer = line.split(':', 1)[1].strip() if ':' in line else line[len('Atsakymas:'):].strip() if 'atsakymas:' in line.lower() else line[2:].strip()
         elif current_question and not current_answer and line:
             # If we have a question but no answer yet, this might be the answer
-            if not line.startswith(('Q:', 'Question:', 'A:', 'Answer:')):
+            if not any(line.startswith(prefix) for prefix in ['Q:', 'Question:', 'A:', 'Answer:', 'K:', 'k:', 'A:', 'a:', 'Klausimas:', 'Atsakymas:']):
                 current_answer = line
     
     # Add the last pair if it exists
     if current_question and current_answer:
         qa_pairs.append((current_question, current_answer))
+    
+    # In maximum coverage mode, try to extract QA pairs from alternative formats as well
+    if len(qa_pairs) < 5:  # If we got very few pairs, try alternative parsing
+        # Try to find Q: A: pairs on the same line
+        import re
+        same_line_pattern = r'(?:Q:|Question:|K:|Klausimas:)\s*(.*?)\s*(?:A:|Answer:|A:|Atsakymas:)\s*(.*?)(?=(?:\n|$|Q:|Question:|K:|Klausimas:))'
+        matches = re.findall(same_line_pattern, content, re.IGNORECASE | re.DOTALL)
+        for question, answer in matches:
+            qa_pairs.append((question.strip(), answer.strip()))
     
     return qa_pairs
 

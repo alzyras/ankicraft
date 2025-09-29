@@ -16,22 +16,22 @@ def main() -> None:
         epilog="""
 Examples:
   # Generate flashcards from a PDF with medium coverage (default)
-  python -m uv_app.flashcard_generator --input document.pdf
+  python -m ankicraft.flashcard_generator --input document.pdf
   
   # Generate flashcards with minimal coverage (fewer cards)
-  python -m uv_app.flashcard_generator --input document.pdf --coverage minimal
+  python -m ankicraft.flashcard_generator --input document.pdf --coverage minimal
   
   # Generate flashcards with maximum coverage (more cards)
-  python -m uv_app.flashcard_generator --input document.pdf --coverage maximum
+  python -m ankicraft.flashcard_generator --input document.pdf --coverage maximum
   
   # Generate flashcards from a website
-  python -m uv_app.flashcard_generator --input https://example.com/article
+  python -m ankicraft.flashcard_generator --input https://example.com/article
   
   # Generate flashcards with custom instructions
-  python -m uv_app.flashcard_generator --input document.pdf --prompt "Extract only dates"
+  python -m ankicraft.flashcard_generator --input document.pdf --prompt "Extract only dates"
   
   # Generate flashcards with a custom deck name
-  python -m uv_app.flashcard_generator --input document.pdf --deck-name "History Notes"
+  python -m ankicraft.flashcard_generator --input document.pdf --deck-name "History Notes"
         
 Coverage Levels:
   minimal   - Only the most essential, distinctive facts from the entire book (~1 card per 20 pages)
@@ -60,9 +60,9 @@ Note: Generates simple Q&A cards. All coverage options cover the entire book.
     
     parser.add_argument(
         "--coverage", "-c",
-        default="medium",
+        default="maximum",
         choices=["minimal", "medium", "maximum"],
-        help="Coverage level: minimal, medium, or maximum (default: medium)"
+        help="Coverage level: minimal, medium, or maximum (default: maximum)"
     )
     
     parser.add_argument(
