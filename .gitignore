@@ -38,3 +38,20 @@ coverage.xml
 # Personal files
 credentials.json
 .env
+.env.local
+.env.production
+*.env
+
+# API keys and tokens
+*token*
+*key*
+*secret*
+*password*
+
+QWEN.md
+
+*.pdf
+
+*.apkg
+
+uv.lock

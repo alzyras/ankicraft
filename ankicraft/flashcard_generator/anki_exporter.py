@@ -57,7 +57,7 @@ def create_anki_deck(
             min-height: 400px;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            justify-content: flex-start;
         }
         .answer {
             color: #27ae60;
@@ -103,7 +103,7 @@ def create_anki_deck(
             min-height: 400px;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            justify-content: flex-start;
         }
         .answer {
             color: #27ae60;

@@ -10,6 +10,7 @@ from .anki_exporter import create_anki_deck, export_to_anki_package
 from .pdf_extractor import extract_text_from_pdf
 from .summarizer import extract_key_points, generate_qa_cards
 from .web_extractor import extract_text_from_url
+from .language_detector import detect_language, get_language_name
 
 # Load settings
 settings = FlashcardSettings()
@@ -19,7 +20,7 @@ def process_file(
     file_path: str, 
     user_prompt: Optional[str] = None,
     deck_name: Optional[str] = None,
-    coverage_level: str = "medium"
+    coverage_level: str = "maximum"
 ) -> str:
     """Process a file (PDF, text, or URL) and generate an Anki deck with simple QA cards.
     
@@ -56,6 +57,11 @@ def process_file(
     if not text:
         raise ValueError("Failed to extract text from the provided source")
     
+    # Detect the language of the document
+    detected_language = detect_language(text)
+    language_name = get_language_name(detected_language)
+    logging.info(f"Detected document language: {language_name} ({detected_language})")
+    
     # Determine target number of cards based on coverage level
     target_cards = _calculate_target_cards(text, coverage_level)
     
@@ -84,7 +90,7 @@ def process_text(
     text: str, 
     user_prompt: Optional[str] = None,
     deck_name: str = None,
-    coverage_level: str = "medium"
+    coverage_level: str = "maximum"
 ) -> str:
     """Process text and generate an Anki deck with simple QA cards.
     
@@ -152,9 +158,9 @@ def _calculate_target_cards(text: str, coverage_level: str) -> int:
         # ~2-3 cards per page across the whole book
         target = max(50, min(5000, int(pages_estimate * 2)))
     else:
-        # Default to medium
-        logging.warning(f"Invalid coverage level '{coverage_level}', defaulting to 'medium'")
-        target = max(20, min(800, int(pages_estimate / 5)))
+        # Default to maximum
+        logging.warning(f"Invalid coverage level '{coverage_level}', defaulting to 'maximum'")
+        target = max(50, min(5000, int(pages_estimate * 2)))
     
     return target
 
@@ -188,16 +194,6 @@ def _generate_qa_cards(
         if q not in seen_questions and len(q) > 10 and len(a) > 5:
             seen_questions.add(q)
             unique_qa_flashcards.append((q, a))
-    
-    # If we have significantly fewer cards than target, do a final pass across the entire document
-    if len(unique_qa_flashcards) < target_cards * 0.7:
-        logging.info("Performing final pass to reach target...")
-        remaining_cards = target_cards - len(unique_qa_flashcards)
-        # Focus on what might have been missed
-        final_cards = generate_qa_cards(text, 
-                                      f"{user_prompt or ''} Extract important content that may have been missed", 
-                                      remaining_cards)
-        unique_qa_flashcards.extend(final_cards)
     
     # Remove duplicates again
     seen_questions = set()

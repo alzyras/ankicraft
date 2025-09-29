@@ -1,5 +1,5 @@
 [project]
-name = "uv_app"
+name = "ankicraft"
 version = "0.1.2"
 description = "Automatically generate flashcards from articles, research papers, or PDFs"
 readme = "README.md"
@@ -16,6 +16,11 @@ dependencies = [
     "pdfplumber>=0.10.3",
     "fpdf2>=2.7.5",
     "openai>=1.0.0",
+    "deep-translator>=1.11.4",
+    "langdetect>=1.0.9",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "python-multipart>=0.0.20",
 ]
 
 [build-system]
@@ -58,12 +63,12 @@ ignore = [
   "W505",    # Doc line too long
   "D100",    # Missing docstring
   "D101",    # Missing docstring
-  "D102",    # Missing docstring
-  "D103",    # Missing docstring
-  "D104",    # Missing docstring
-  "D105",    # Missing docstring
-  "D106",    # Missing docstring
-  "D107",    # Missing docstring
+  "D102",  # Missing docstring
+  "D103",  # Missing docstring
+  "D104",  # Missing docstring
+  "D105",  # Missing docstring
+  "D106",  # Missing docstring
+  "D107",  # Missing docstring
 ]
 
 [tool.ruff.lint.pydocstyle]
